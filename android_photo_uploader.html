@@ -33,7 +33,6 @@
             opacity: 1;
             bottom: 50px;
         }
-        /* Stile per la modale */
         .modal-overlay {
             position: fixed;
             top: 0;
@@ -73,7 +72,6 @@
             "Altri allergeni": ["Leguminose", "Pesci e Molluschi", "Rosacee", "Test Speciali", "Latex"]
         };
         
-        // Funzione Toast globale
         function showToast(message, bgColor) {
             const toast = document.getElementById('toast');
             if (toast) {
@@ -131,6 +129,7 @@
             }
 
             function handleAuthClick() {
+                // Rimuovendo 'prompt', Google gestirà la sessione automaticamente.
                 if (tokenClient) tokenClient.requestAccessToken({}); 
                 else showToast("Client di autenticazione non pronto.", 'bg-yellow-500 text-black');
             }
@@ -150,12 +149,14 @@
             const handleFileChange = (event, groupName) => {
                 const file = event.target.files[0];
                 if (file) {
-                    const reader = new FileReader();
-                    reader.onload = (e) => {
-                        setStagedFiles(prev => ({ ...prev, [groupName]: { file, preview: e.target.result } }));
-                        showToast(`Foto per "${groupName}" aggiunta.`, 'bg-blue-500');
-                    };
-                    reader.readAsDataURL(file);
+                    // *** CORREZIONE: Usa URL.createObjectURL per efficienza di memoria ***
+                    const previewUrl = URL.createObjectURL(file);
+                    // Pulisce l'URL dell'anteprima precedente se esiste per liberare memoria
+                    if (stagedFiles[groupName] && stagedFiles[groupName].preview) {
+                        URL.revokeObjectURL(stagedFiles[groupName].preview);
+                    }
+                    setStagedFiles(prev => ({ ...prev, [groupName]: { file, preview: previewUrl } }));
+                    showToast(`Foto per "${groupName}" aggiunta.`, 'bg-blue-500');
                 }
                 event.target.value = null; 
             };
@@ -230,6 +231,10 @@
             const handleNewPatient = (force = false) => {
                 const confirmed = force || Object.keys(stagedFiles).length === 0 || confirm("Hai foto non caricate. Vuoi iniziare con un nuovo paziente? Le foto andranno perse.");
                 if (confirmed) {
+                    // Pulisce gli URL delle anteprime per liberare memoria
+                    Object.values(stagedFiles).forEach(({preview}) => {
+                        if (preview) URL.revokeObjectURL(preview);
+                    });
                     setStagedFiles({}); setCognome(''); setNome(''); setActiveCategory(null);
                 }
             };
@@ -384,5 +389,4 @@
     </script>
 </body>
 </html>
-
 
