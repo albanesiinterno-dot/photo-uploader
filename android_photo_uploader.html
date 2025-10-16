@@ -129,6 +129,7 @@
             }
 
             function handleAuthClick() {
+                // Rimuovendo 'prompt', Google gestirà la sessione automaticamente.
                 if (tokenClient) tokenClient.requestAccessToken({}); 
                 else showToast("Client di autenticazione non pronto.", 'bg-yellow-500 text-black');
             }
@@ -148,7 +149,9 @@
             const handleFileChange = (event, groupName) => {
                 const file = event.target.files[0];
                 if (file) {
+                    // *** CORREZIONE: Usa URL.createObjectURL per efficienza di memoria ***
                     const previewUrl = URL.createObjectURL(file);
+                    // Pulisce l'URL dell'anteprima precedente se esiste per liberare memoria
                     if (stagedFiles[groupName] && stagedFiles[groupName].preview) {
                         URL.revokeObjectURL(stagedFiles[groupName].preview);
                     }
@@ -228,35 +231,12 @@
             const handleNewPatient = (force = false) => {
                 const confirmed = force || Object.keys(stagedFiles).length === 0 || confirm("Hai foto non caricate. Vuoi iniziare con un nuovo paziente? Le foto andranno perse.");
                 if (confirmed) {
+                    // Pulisce gli URL delle anteprime per liberare memoria
                     Object.values(stagedFiles).forEach(({preview}) => {
                         if (preview) URL.revokeObjectURL(preview);
                     });
                     setStagedFiles({}); setCognome(''); setNome(''); setActiveCategory(null);
                 }
-            };
-
-            const handleCopySummary = () => {
-                if (!cognome || !nome) {
-                    showToast("Inserisci Nome e Cognome del paziente.", 'bg-yellow-500 text-black');
-                    return;
-                }
-                const files = Object.keys(stagedFiles);
-                if (files.length === 0) {
-                    showToast("Nessuna foto scattata da riepilogare.", 'bg-yellow-500 text-black');
-                    return;
-                }
-                const testList = files
-                    .filter(group => group !== "Controllo Positivo (Istamina)")
-                    .join(', ');
-                const summaryText = `${nome.trim()} ${cognome.trim()}, ${testList}`;
-                navigator.clipboard.writeText(summaryText)
-                    .then(() => {
-                        showToast("Riepilogo copiato negli appunti!", 'bg-green-500');
-                    })
-                    .catch(err => {
-                        showToast("Errore: impossibile copiare.", 'bg-red-500');
-                        console.error('Could not copy text: ', err);
-                    });
             };
 
             if (isFileSystemError) return ( <div className="min-h-screen bg-red-50 flex items-center justify-center p-4"><div className="bg-white p-8 rounded-xl shadow-2xl max-w-lg text-center"><h1 className="text-2xl font-bold text-red-700 mb-4">Errore di Avvio</h1><p className="text-gray-700 mb-2">Questa applicazione non può essere eseguita da un file locale (<code className="bg-red-100 text-red-900 p-1 rounded">file://</code>).</p><p className="text-gray-700 font-medium">Per funzionare, deve essere avviata tramite un server web locale (es. con l'estensione "Live Server" di VS Code).</p></div></div> );
@@ -285,7 +265,7 @@
                         stagedFiles={stagedFiles} accessToken={accessToken} isUploading={isUploading}
                     />
                     
-                    <FileList stagedFiles={stagedFiles} handleTakePhoto={handleTakePhoto} handleCopySummary={handleCopySummary} />
+                    <FileList stagedFiles={stagedFiles} handleTakePhoto={handleTakePhoto} />
 
                     <button onClick={handleUploadAll} disabled={!accessToken || isUploading || Object.keys(stagedFiles).length === 0} className="w-full bg-green-500 text-white font-bold py-4 px-4 rounded-lg shadow-lg hover:bg-green-600 transition-colors disabled:bg-gray-300 disabled:cursor-not-allowed text-lg sticky bottom-4 z-10">
                         {isUploading ? uploadProgress : `Carica ${Object.keys(stagedFiles).length} File su Drive`}
@@ -384,7 +364,7 @@
             )
         };
         
-        const FileList = ({ stagedFiles, handleTakePhoto, handleCopySummary }) => (
+        const FileList = ({ stagedFiles, handleTakePhoto }) => (
             <div className="bg-white p-6 rounded-xl shadow-md mb-6">
                 <h2 className="text-xl font-semibold text-gray-700 border-b pb-2 mb-4">File Pronti per il Caricamento</h2>
                 {Object.keys(stagedFiles).length === 0 ? (
@@ -402,11 +382,6 @@
                         ))}
                     </ul>
                 )}
-                {Object.keys(stagedFiles).length > 0 && (
-                    <button onClick={handleCopySummary} className="w-full mt-4 bg-indigo-600 text-white font-bold py-3 px-4 rounded-lg shadow-md hover:bg-indigo-700 transition-colors">
-                        Copia Riepilogo per Referto
-                    </button>
-                )}
             </div>
         );
 
@@ -414,4 +389,3 @@
     </script>
 </body>
 </html>
-
