@@ -39,11 +39,12 @@
             left: 0;
             right: 0;
             bottom: 0;
-            background-color: rgba(0, 0, 0, 0.5);
+            background-color: rgba(0, 0, 0, 0.6);
             display: flex;
             align-items: center;
             justify-content: center;
             z-index: 50;
+            backdrop-filter: blur(5px);
         }
     </style>
 </head>
@@ -52,26 +53,42 @@
     <div id="root"></div>
     <div id="toast" class="toast"></div>
 
+    <!-- React e Babel -->
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     
+    <!-- API Google -->
     <script async defer src="https://apis.google.com/js/api.js"></script>
     <script async defer src="https://accounts.google.com/gsi/client"></script>
 
     <script type="text/babel">
         const { useState, useEffect, useRef } = React;
         
+        // --- CONFIGURAZIONE PRINCIPALE ---
+        
         const API_KEY = 'AIzaSyDD1Sd4nw5Fdwcy36ZAB4dSDhVMqOFhJsw';
         const CLIENT_ID = '1091891823693-m0ggq3m0jj5mf72g4ngdrcvoic7fvsrv.apps.googleusercontent.com';
         const SCOPES = 'https://www.googleapis.com/auth/drive';
 
+        // Struttura fissa degli allergeni, condivisa da tutti i profili
         const ALLERGEN_STRUCTURE = {
-            "Alimenti": ["Alimenti Gruppo 1", "Alimenti Gruppo 2", "Alimenti Gruppo 3", "Alimenti Gruppo 4"],
+            "Alimenti": ["Alimenti Gruppo 1", "Alimenti Gruppo 2", "Alimenti Gruppo 3", "Alimenti Gruppo 4", "Alimenti Pediatrico", "Proteine del Latte", "Uovo"],
             "Inalanti": ["Inalanti Gruppo 1", "Inalanti Gruppo 2", "Inalanti Gruppo 3"],
             "Altri allergeni": ["Leguminose", "Pesci e Molluschi", "Rosacee", "Test Speciali", "Latex"]
         };
         
+        // Profili predefiniti. Verranno creati al primo avvio se non esiste nulla.
+        const DEFAULT_PROFILES = {
+            "Centro Albanesi": {
+                drivePath: "Albanesi/Cartelle_Cliniche_Digitali"
+            },
+            "Studio Prova": {
+                drivePath: "Studio_Prova/Pazienti"
+            }
+        };
+
+        // Funzione Toast globale
         function showToast(message, bgColor) {
             const toast = document.getElementById('toast');
             if (toast) {
@@ -81,7 +98,177 @@
             }
         }
 
-        function App() {
+        // --- GESTIONE PROFILI (Login) ---
+
+        /**
+         * Componente wrapper che gestisce la logica dei profili.
+         * Mostra la vista di Login o l'App principale.
+         */
+        function ProfileWrapper() {
+            const [allProfiles, setAllProfiles] = useState(null);
+            const [currentProfileName, setCurrentProfileName] = useState(null);
+            const [isLoading, setIsLoading] = useState(true);
+
+            // Carica i profili e il profilo corrente da localStorage all'avvio
+            useEffect(() => {
+                try {
+                    const savedProfiles = localStorage.getItem('driveAppProfiles');
+                    if (savedProfiles) {
+                        setAllProfiles(JSON.parse(savedProfiles));
+                    } else {
+                        // Se non ci sono profili, imposta quelli di default
+                        setAllProfiles(DEFAULT_PROFILES);
+                        localStorage.setItem('driveAppProfiles', JSON.stringify(DEFAULT_PROFILES));
+                    }
+                    
+                    const savedProfileName = localStorage.getItem('driveAppCurrentProfile');
+                    if (savedProfileName) {
+                        setCurrentProfileName(savedProfileName);
+                    }
+                } catch (error) {
+                    console.error("Errore nel caricamento dei profili:", error);
+                    setAllProfiles(DEFAULT_PROFILES); // Reset in caso di errore
+                }
+                setIsLoading(false);
+            }, []);
+
+            // Salva il profilo corrente in localStorage quando cambia
+            const handleSetCurrentProfile = (name) => {
+                setCurrentProfileName(name);
+                if (name) {
+                    localStorage.setItem('driveAppCurrentProfile', name);
+                } else {
+                    localStorage.removeItem('driveAppCurrentProfile');
+                }
+            };
+
+            // Salva tutti i profili in localStorage quando cambiano
+            const handleSetAllProfiles = (profiles) => {
+                setAllProfiles(profiles);
+                localStorage.setItem('driveAppProfiles', JSON.stringify(profiles));
+            };
+
+            if (isLoading || !allProfiles) {
+                return (
+                    <div className="min-h-screen flex items-center justify-center">
+                        <p className="text-gray-500">Caricamento profili...</p>
+                    </div>
+                );
+            }
+
+            if (!currentProfileName) {
+                return (
+                    <LoginView 
+                        allProfiles={allProfiles}
+                        setAllProfiles={handleSetAllProfiles}
+                        setCurrentProfileName={handleSetCurrentProfile}
+                    />
+                );
+            }
+
+            return (
+                <App
+                    currentProfile={{ name: currentProfileName, ...allProfiles[currentProfileName] }}
+                    allProfiles={allProfiles}
+                    setAllProfiles={handleSetAllProfiles}
+                    setCurrentProfileName={handleSetCurrentProfile}
+                />
+            );
+        }
+
+        /**
+         * Vista di "Login" per selezionare o creare un profilo studio.
+         */
+        const LoginView = ({ allProfiles, setAllProfiles, setCurrentProfileName }) => {
+            const [showCreateForm, setShowCreateForm] = useState(false);
+            const [newProfileName, setNewProfileName] = useState("");
+            const [newProfilePath, setNewProfilePath] = useState("");
+
+            const handleCreateProfile = (e) => {
+                e.preventDefault();
+                const name = newProfileName.trim();
+                const path = newProfilePath.trim();
+                if (!name || !path) {
+                    showToast("Inserisci Nome Studio e Percorso Drive.", 'bg-red-500');
+                    return;
+                }
+                if (allProfiles[name]) {
+                    showToast("Esiste già un profilo con questo nome.", 'bg-yellow-500 text-black');
+                    return;
+                }
+
+                const newProfiles = { ...allProfiles, [name]: { drivePath: path } };
+                setAllProfiles(newProfiles);
+                setCurrentProfileName(name);
+                setNewProfileName("");
+                setNewProfilePath("");
+                setShowCreateForm(false);
+            };
+
+            return (
+                <div className="min-h-screen bg-gray-100 p-4 flex flex-col justify-center items-center">
+                    <div className="bg-white p-6 rounded-xl shadow-2xl w-full max-w-md">
+                        <h1 className="text-2xl font-bold text-center text-gray-800 mb-6">Seleziona Profilo Studio</h1>
+                        
+                        <div className="space-y-3 mb-6">
+                            {Object.keys(allProfiles).map(name => (
+                                <button
+                                    key={name}
+                                    onClick={() => setCurrentProfileName(name)}
+                                    className="w-full text-left p-4 bg-white border-2 border-blue-500 text-blue-600 rounded-lg shadow-sm hover:bg-blue-50 hover:shadow-md transition-all"
+                                >
+                                    <span className="font-bold text-lg">{name}</span>
+                                    <p className="text-sm text-gray-600 truncate">Salva in: {allProfiles[name].drivePath}</p>
+                                </button>
+                            ))}
+                        </div>
+
+                        {showCreateForm ? (
+                            <form onSubmit={handleCreateProfile} className="space-y-4 p-4 border border-gray-200 rounded-lg">
+                                <h2 className="text-lg font-semibold">Nuovo Profilo</h2>
+                                <div>
+                                    <label htmlFor="newProfileName" className="block text-sm font-medium text-gray-600 mb-1">Nome Studio</label>
+                                    <input 
+                                        type="text" id="newProfileName" 
+                                        value={newProfileName} onChange={e => setNewProfileName(e.target.value)}
+                                        className="w-full p-2 border border-gray-300 rounded-lg shadow-sm"
+                                        placeholder="Es. Studio Rossi"
+                                    />
+                                </div>
+                                <div>
+                                    <label htmlFor="newProfilePath" className="block text-sm font-medium text-gray-600 mb-1">Percorso Cartella Drive</label>
+                                    <input 
+                                        type="text" id="newProfilePath"
+                                        value={newProfilePath} onChange={e => setNewProfilePath(e.target.value)}
+                                        className="w-full p-2 border border-gray-300 rounded-lg shadow-sm"
+                                        placeholder="Es. IlMioStudio/Pazienti"
+                                    />
+                                </div>
+                                <div className="flex gap-2">
+                                    <button type="button" onClick={() => setShowCreateForm(false)} className="w-full bg-gray-200 text-gray-700 py-2 px-4 rounded-lg">Annulla</button>
+                                    <button type="submit" className="w-full bg-green-500 text-white py-2 px-4 rounded-lg">Salva</button>
+                                </div>
+                            </form>
+                        ) : (
+                            <button
+                                onClick={() => setShowCreateForm(true)}
+                                className="w-full bg-green-500 text-white font-bold py-3 px-4 rounded-lg shadow-md hover:bg-green-600 transition-colors"
+                            >
+                                Crea Nuovo Profilo
+                            </button>
+                        )}
+                    </div>
+                </div>
+            );
+        };
+
+        // --- APPLICAZIONE PRINCIPALE ---
+        
+        /**
+         * Componente App principale per il caricamento delle foto.
+         * Riceve il profilo corrente come prop.
+         */
+        function App({ currentProfile, allProfiles, setAllProfiles, setCurrentProfileName }) {
             const [cognome, setCognome] = useState('');
             const [nome, setNome] = useState('');
             
@@ -97,13 +284,16 @@
             
             const [activeCategory, setActiveCategory] = useState(null);
             const [showSettings, setShowSettings] = useState(false);
-            const [drivePath, setDrivePath] = useState('Albanesi/Cartelle_Cliniche_Digitali');
+            
+            // Il percorso drive è ora gestito nello stato, derivato dal profilo
+            const [drivePath, setDrivePath] = useState(currentProfile.drivePath);
 
             const fileInputRef = useRef(null);
 
+            // Carica le API di Google
             useEffect(() => {
-                const savedPath = localStorage.getItem('drivePath');
-                if (savedPath) setDrivePath(savedPath);
+                // Salva il drivePath del profilo corrente nello stato locale
+                setDrivePath(currentProfile.drivePath);
 
                 if (window.location.protocol === 'file:') { setIsFileSystemError(true); return; }
 
@@ -117,26 +307,48 @@
                     setGisReady(true);
                 }
 
+                // Assicura che gli script vengano caricati correttamente
                 const gapiScript = document.querySelector('script[src="https://apis.google.com/js/api.js"]');
-                gapiScript.onload = handleGapiLoad;
                 const gisScript = document.querySelector('script[src="https://accounts.google.com/gsi/client"]');
-                gisScript.onload = handleGisLoad;
-            }, []);
+                
+                if (gapiScript.loaded) handleGapiLoad();
+                else gapiScript.onload = handleGapiLoad;
+                
+                if (gisScript.loaded) handleGisLoad();
+                else gisScript.onload = handleGisLoad;
+
+                gapiScript.loaded = true;
+                gisScript.loaded = true;
+            }, [currentProfile]); // Si riattiva se cambia il profilo
             
             async function initializeGapiClient() {
                 await gapi.client.init({ apiKey: API_KEY, discoveryDocs: ["https://www.googleapis.com/discovery/v1/apis/drive/v3/rest"] });
                 setGapiReady(true);
             }
 
+            // *** FIX: Tentativo di login silente all'avvio ***
+            // Prova a ottenere un token senza popup se l'utente è già loggato/ha dato consenso
+            useEffect(() => {
+                if (gapiReady && gisReady && tokenClient && !accessToken) {
+                    tokenClient.requestAccessToken({ prompt: 'none' });
+                }
+            }, [gapiReady, gisReady, tokenClient, accessToken]);
+
+            // Bottone di autenticazione manuale (mostra sempre il popup)
             function handleAuthClick() {
-                // Rimuovendo 'prompt', Google gestirà la sessione automaticamente.
-                if (tokenClient) tokenClient.requestAccessToken({}); 
-                else showToast("Client di autenticazione non pronto.", 'bg-yellow-500 text-black');
+                if (tokenClient) {
+                    tokenClient.requestAccessToken({ prompt: 'consent' }); 
+                } else {
+                    showToast("Client di autenticazione non pronto. Riprova tra poco.", 'bg-yellow-500 text-black');
+                }
             }
 
             function handleSignoutClick() {
                 if (accessToken) {
-                    google.accounts.oauth2.revoke(accessToken, () => { setAccessToken(null); showToast("Disconnessione riuscita.", 'bg-gray-500'); });
+                    google.accounts.oauth2.revoke(accessToken, () => { 
+                        setAccessToken(null); 
+                        showToast("Disconnessione riuscita.", 'bg-gray-500'); 
+                    });
                 }
             }
 
@@ -149,23 +361,17 @@
             const handleFileChange = (event, groupName) => {
                 const file = event.target.files[0];
                 if (file) {
-                    // *** CORREZIONE: Usa URL.createObjectURL per efficienza di memoria ***
-                    const previewUrl = URL.createObjectURL(file);
-                    // Pulisce l'URL dell'anteprima precedente se esiste per liberare memoria
-                    if (stagedFiles[groupName] && stagedFiles[groupName].preview) {
-                        URL.revokeObjectURL(stagedFiles[groupName].preview);
-                    }
-                    setStagedFiles(prev => ({ ...prev, [groupName]: { file, preview: previewUrl } }));
-                    showToast(`Foto per "${groupName}" aggiunta.`, 'bg-blue-500');
+                    const reader = new FileReader();
+                    reader.onload = (e) => {
+                        setStagedFiles(prev => ({ ...prev, [groupName]: { file, preview: e.target.result } }));
+                        showToast(`Foto per "${groupName}" aggiunta.`, 'bg-blue-500');
+                    };
+                    reader.readAsDataURL(file);
                 }
                 event.target.value = null; 
             };
             
             const handleUploadAll = async () => {
-                if (!gapiReady) {
-                    showToast("L'API di Google non è ancora pronta. Riprova tra un istante.", 'bg-yellow-500 text-black');
-                    return;
-                }
                 if (!accessToken || Object.keys(stagedFiles).length === 0) {
                     showToast(accessToken ? "Nessuna foto da caricare." : "Autenticazione Google Drive necessaria.", 'bg-red-500');
                     return;
@@ -173,29 +379,39 @@
                 setIsUploading(true);
                 const filesToUpload = Object.entries(stagedFiles);
                 try {
+                    // Usa il drivePath dallo stato (che viene dal profilo)
                     const pathParts = drivePath.split('/').filter(p => p.trim() !== '');
                     let currentParentId = 'root';
+                    
+                    // 1. Trova o crea la cartella base dello studio
                     for (const part of pathParts) {
                         currentParentId = await findOrCreateFolder(part, currentParentId);
                     }
                     const baseFolderId = currentParentId;
 
-                    const patientFolderName = `${cognome.trim()}_${nome.trim()}`;
+                    // *** NOVITÀ: Aggiunge la data (YYYY-MM-DD) alla cartella paziente ***
+                    const dateString = new Date().toISOString().split('T')[0];
+                    const patientFolderName = `${cognome.trim()}_${nome.trim()}_${dateString}`;
                     const patientFolderId = await findOrCreateFolder(patientFolderName, baseFolderId);
 
+                    // 3. Carica i file nelle sottocartelle
                     for (let i = 0; i < filesToUpload.length; i++) {
                         const [groupName, { file }] = filesToUpload[i];
                         setUploadProgress(`Caricamento ${i + 1}/${filesToUpload.length}: "${groupName}"...`);
+                        
                         let mainCategory = Object.keys(ALLERGEN_STRUCTURE).find(cat => ALLERGEN_STRUCTURE[cat].includes(groupName));
+                        
                         if (groupName === "Controllo Positivo (Istamina)") {
+                            // Carica il controllo positivo direttamente nella cartella paziente
                             await uploadSingleFile(file, groupName, patientFolderId);
                         } else if (mainCategory) {
+                             // Carica gli altri nelle rispettive sottocartelle (Alimenti, Inalanti, ...)
                              const categoryFolderId = await findOrCreateFolder(mainCategory, patientFolderId);
                              await uploadSingleFile(file, groupName, categoryFolderId);
                         }
                     }
                     showToast('Tutti i file sono stati caricati!', 'bg-green-500');
-                    handleNewPatient(true);
+                    handleNewPatient(true); // Resetta per il prossimo paziente
                 } catch (error) {
                     showToast(`Errore durante il caricamento: ${error.message}`, 'bg-red-500');
                 } finally {
@@ -204,6 +420,7 @@
                 }
             };
 
+            // Funzione di upload singola (invariata)
             async function uploadSingleFile(file, groupName, parentFolderId) {
                 const fileName = `${groupName}.jpg`;
                 const metadata = { name: fileName, parents: [parentFolderId], mimeType: 'image/jpeg' };
@@ -217,6 +434,7 @@
                 if (result.error) throw new Error(`${result.error.message} (file: ${fileName})`);
             }
 
+            // Funzione findOrCreate (invariata)
             async function findOrCreateFolder(name, parentId) {
                 const query = `mimeType='application/vnd.google-apps.folder' and trashed=false and name='${name}' and '${parentId}' in parents`;
                 const response = await gapi.client.drive.files.list({ q: query, fields: 'files(id)', spaces: 'drive' });
@@ -231,29 +449,63 @@
             const handleNewPatient = (force = false) => {
                 const confirmed = force || Object.keys(stagedFiles).length === 0 || confirm("Hai foto non caricate. Vuoi iniziare con un nuovo paziente? Le foto andranno perse.");
                 if (confirmed) {
-                    // Pulisce gli URL delle anteprime per liberare memoria
-                    Object.values(stagedFiles).forEach(({preview}) => {
-                        if (preview) URL.revokeObjectURL(preview);
-                    });
                     setStagedFiles({}); setCognome(''); setNome(''); setActiveCategory(null);
                 }
+            };
+
+            // Gestisce il salvataggio del percorso drive modificato
+            const handleSaveSettings = (newPath) => {
+                setDrivePath(newPath); // Aggiorna lo stato locale
+                // Aggiorna la lista globale dei profili
+                const updatedProfiles = {
+                    ...allProfiles,
+                    [currentProfile.name]: {
+                        ...allProfiles[currentProfile.name],
+                        drivePath: newPath
+                    }
+                };
+                setAllProfiles(updatedProfiles); // Salva in localStorage
+                showToast("Impostazioni salvate.", "bg-green-500");
+                setShowSettings(false);
+            };
+
+            // Gestisce il cambio profilo
+            const handleChangeProfile = () => {
+                setShowSettings(false);
+                setCurrentProfileName(null); // Torna alla vista Login
             };
 
             if (isFileSystemError) return ( <div className="min-h-screen bg-red-50 flex items-center justify-center p-4"><div className="bg-white p-8 rounded-xl shadow-2xl max-w-lg text-center"><h1 className="text-2xl font-bold text-red-700 mb-4">Errore di Avvio</h1><p className="text-gray-700 mb-2">Questa applicazione non può essere eseguita da un file locale (<code className="bg-red-100 text-red-900 p-1 rounded">file://</code>).</p><p className="text-gray-700 font-medium">Per funzionare, deve essere avviata tramite un server web locale (es. con l'estensione "Live Server" di VS Code).</p></div></div> );
 
             return (
                 <div className="min-h-screen bg-gray-50 p-4 pb-20 max-w-2xl mx-auto">
-                    {showSettings && <SettingsModal drivePath={drivePath} setDrivePath={setDrivePath} onClose={() => setShowSettings(false)} onAuth={handleAuthClick} onSignout={handleSignoutClick} accessToken={accessToken} />}
+                    {showSettings && 
+                        <SettingsModal 
+                            drivePath={drivePath} 
+                            setDrivePath={setDrivePath}
+                            onClose={() => setShowSettings(false)} 
+                            onSave={handleSaveSettings}
+                            onChangeProfile={handleChangeProfile}
+                            onAuth={handleAuthClick} 
+                            onSignout={handleSignoutClick} 
+                            accessToken={accessToken}
+                            gisReady={gisReady} // *** FIX: Passa lo stato di 'gisReady'
+                        />
+                    }
 
                     <header className="bg-white p-4 rounded-xl shadow-md mb-6 sticky top-4 z-10">
                         <div className="flex items-center justify-between">
-                            <h1 className="text-2xl font-bold text-gray-800">Caricamento Foto</h1>
-                             <button onClick={() => setShowSettings(true)} className="text-gray-500 hover:text-blue-600">
+                            <div>
+                                <h1 className="text-2xl font-bold text-gray-800">Caricamento Foto</h1>
+                                <p className="text-sm text-blue-600 font-medium">{currentProfile.name}</p>
+                            </div>
+                             <button onClick={() => setShowSettings(true)} className="text-gray-500 hover:text-blue-600 p-2">
                                 <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
                              </button>
                         </div>
                          {!(gapiReady && gisReady) && <p className="text-center text-gray-500 mt-2">Inizializzazione API Google...</p>}
                          {gapiReady && gisReady && !accessToken && <p className="text-center text-red-500 font-medium mt-2">Accesso a Google Drive richiesto. Vai nelle impostazioni per accedere.</p>}
+                         {gapiReady && gisReady && accessToken && <p className="text-center text-green-600 font-medium mt-2">Accesso a Google Drive attivo.</p>}
                     </header>
                     
                     <MainView 
@@ -276,14 +528,16 @@
             );
         }
 
-        const SettingsModal = ({ drivePath, setDrivePath, onClose, onAuth, onSignout, accessToken }) => {
+        /**
+         * Modale delle Impostazioni
+         */
+        const SettingsModal = ({ drivePath, setDrivePath, onClose, onSave, onChangeProfile, onAuth, onSignout, accessToken, gisReady }) => {
             const [localPath, setLocalPath] = useState(drivePath);
-            const handleSave = () => {
-                setDrivePath(localPath);
-                localStorage.setItem('drivePath', localPath);
-                showToast("Impostazioni salvate.", "bg-green-500");
-                onClose();
+            
+            const handleSaveClick = () => {
+                onSave(localPath); // Passa il nuovo percorso al genitore
             };
+            
             return (
                 <div className="modal-overlay">
                     <div className="bg-white rounded-xl shadow-2xl p-6 w-11/12 max-w-lg m-4 space-y-4">
@@ -294,23 +548,34 @@
                         <div>
                             <label htmlFor="drivePathInput" className="block text-sm font-medium text-gray-600 mb-1">Percorso Cartella su Drive</label>
                             <input type="text" id="drivePathInput" value={localPath} onChange={e => setLocalPath(e.target.value)} className="w-full p-2 border border-gray-300 rounded-lg shadow-sm" placeholder="Es. Cartella1/Cartella2"/>
-                            <p className="text-xs text-gray-500 mt-1">Separa i nomi delle cartelle con uno slash (/).</p>
+                            <p className="text-xs text-gray-500 mt-1">Percorso per il profilo studio corrente.</p>
                         </div>
                         <div>
                             <h3 className="text-lg font-semibold mb-2">Account Google</h3>
                             {accessToken ? 
                                 <button onClick={onSignout} className="w-full bg-red-500 text-white py-2 px-4 rounded-lg">Disconnetti</button> :
-                                <button onClick={onAuth} className="w-full bg-blue-500 text-white py-2 px-4 rounded-lg">Accedi a Google</button>
+                                // *** FIX: Disabilita il bottone se 'gisReady' è false o se l'utente è già loggato ***
+                                <button 
+                                    onClick={onAuth} 
+                                    disabled={!gisReady || !!accessToken}
+                                    className="w-full bg-blue-500 text-white py-2 px-4 rounded-lg disabled:bg-gray-300 disabled:cursor-not-allowed"
+                                >
+                                    {gisReady ? "Accedi a Google" : "Inizializzazione..."}
+                                </button>
                             }
                         </div>
-                        <div className="flex justify-end pt-4">
-                            <button onClick={handleSave} className="bg-green-500 text-white font-bold py-2 px-6 rounded-lg">Salva</button>
+                        <div className="border-t pt-4 space-y-2">
+                             <button onClick={onChangeProfile} className="w-full bg-yellow-500 text-black font-bold py-2 px-6 rounded-lg">Cambia Profilo Studio</button>
+                             <button onClick={handleSaveClick} className="w-full bg-green-500 text-white font-bold py-2 px-6 rounded-lg">Salva Impostazioni</button>
                         </div>
                     </div>
                 </div>
             );
         };
         
+        /**
+         * Vista Principale (Dati Paziente e Categorie)
+         */
         const MainView = ({ cognome, setCognome, nome, setNome, handleNewPatient, activeCategory, setActiveCategory, handleTakePhoto, stagedFiles, accessToken, isUploading }) => {
              const renderSubgroupView = () => (
                 <div className="bg-white p-6 rounded-xl shadow-md mb-6 space-y-4">
@@ -364,6 +629,9 @@
             )
         };
         
+        /**
+         * Lista dei file pronti per l'upload
+         */
         const FileList = ({ stagedFiles, handleTakePhoto }) => (
             <div className="bg-white p-6 rounded-xl shadow-md mb-6">
                 <h2 className="text-xl font-semibold text-gray-700 border-b pb-2 mb-4">File Pronti per il Caricamento</h2>
@@ -385,7 +653,8 @@
             </div>
         );
 
-        ReactDOM.render(<App />, document.getElementById('root'));
+        // Avvia l'applicazione renderizzando il ProfileWrapper
+        ReactDOM.render(<ProfileWrapper />, document.getElementById('root'));
     </script>
 </body>
 </html>
