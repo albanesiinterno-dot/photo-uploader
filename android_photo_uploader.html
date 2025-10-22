@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Caricamento Foto</title>
+    <title>Caricamento Foto Test</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
@@ -33,6 +33,19 @@
             opacity: 1;
             bottom: 50px;
         }
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: rgba(0, 0, 0, 0.6);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 50;
+            backdrop-filter: blur(5px);
+        }
     </style>
 </head>
 <body class="bg-gray-100">
@@ -40,24 +53,41 @@
     <div id="root"></div>
     <div id="toast" class="toast"></div>
 
+    <!-- React e Babel -->
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     
+    <!-- API Google -->
+    <script async defer src="https://apis.google.com/js/api.js"></script>
+    <script async defer src="https://accounts.google.com/gsi/client"></script>
+
     <script type="text/babel">
         const { useState, useEffect, useRef } = React;
         
-        // --- CONFIGURAZIONE API ---
-        // Modifica questo se il tuo sito non è in HTTPS o il percorso è diverso
-        const API_BASE_URL = 'https://theallergist.it/api'; 
-        // -------------------------
+        // --- CONFIGURAZIONE PRINCIPALE ---
+        
+        const API_KEY = 'AIzaSyDD1Sd4nw5Fdwcy36ZAB4dSDhVMqOFhJsw';
+        const CLIENT_ID = '1091891823693-m0ggq3m0jj5mf72g4ngdrcvoic7fvsrv.apps.googleusercontent.com';
+        const SCOPES = 'https://www.googleapis.com/auth/drive';
 
+        // Struttura fissa degli allergeni, condivisa da tutti i profili
         const ALLERGEN_STRUCTURE = {
             "Alimenti": ["Alimenti Gruppo 1", "Alimenti Gruppo 2", "Alimenti Gruppo 3", "Alimenti Gruppo 4", "Alimenti Pediatrico", "Proteine del Latte", "Uovo"],
             "Inalanti": ["Inalanti Gruppo 1", "Inalanti Gruppo 2", "Inalanti Gruppo 3"],
             "Altri allergeni": ["Leguminose", "Pesci e Molluschi", "Rosacee", "Test Speciali", "Latex"]
         };
         
+        // Profili predefiniti. Verranno creati al primo avvio se non esiste nulla.
+        const DEFAULT_PROFILES = {
+            "Centro Albanesi": {
+                drivePath: "Albanesi/Cartelle_Cliniche_Digitali"
+            },
+            "Studio Prova": {
+                drivePath: "Studio_Prova/Pazienti"
+            }
+        };
+
         // Funzione Toast globale
         function showToast(message, bgColor) {
             const toast = document.getElementById('toast');
@@ -68,101 +98,262 @@
             }
         }
 
-        // Funzione helper per le chiamate API
-        async function apiFetch(endpoint, options = {}) {
-            try {
-                const response = await fetch(`${API_BASE_URL}/${endpoint}`, {
-                    ...options,
-                    // Fondamentale per inviare/ricevere i cookie di sessione
-                    credentials: 'include', 
-                });
+        // --- GESTIONE PROFILI (Login) ---
 
-                const data = await response.json();
+        /**
+         * Componente wrapper che gestisce la logica dei profili.
+         * Mostra la vista di Login o l'App principale.
+         */
+        function ProfileWrapper() {
+            const [allProfiles, setAllProfiles] = useState(null);
+            const [currentProfileName, setCurrentProfileName] = useState(null);
+            const [isLoading, setIsLoading] = useState(true);
 
-                if (!response.ok) {
-                    throw new Error(data.message || `Errore ${response.status}`);
+            // Carica i profili e il profilo corrente da localStorage all'avvio
+            useEffect(() => {
+                try {
+                    const savedProfiles = localStorage.getItem('driveAppProfiles');
+                    if (savedProfiles) {
+                        setAllProfiles(JSON.parse(savedProfiles));
+                    } else {
+                        // Se non ci sono profili, imposta quelli di default
+                        setAllProfiles(DEFAULT_PROFILES);
+                        localStorage.setItem('driveAppProfiles', JSON.stringify(DEFAULT_PROFILES));
+                    }
+                    
+                    const savedProfileName = localStorage.getItem('driveAppCurrentProfile');
+                    if (savedProfileName) {
+                        setCurrentProfileName(savedProfileName);
+                    }
+                } catch (error) {
+                    console.error("Errore nel caricamento dei profili:", error);
+                    setAllProfiles(DEFAULT_PROFILES); // Reset in caso di errore
                 }
-                return data;
-            } catch (error) {
-                console.error(`Errore API (${endpoint}):`, error);
-                throw error; // Rilancia l'errore per gestirlo nel componente
+                setIsLoading(false);
+            }, []);
+
+            // Salva il profilo corrente in localStorage quando cambia
+            const handleSetCurrentProfile = (name) => {
+                setCurrentProfileName(name);
+                if (name) {
+                    localStorage.setItem('driveAppCurrentProfile', name);
+                } else {
+                    localStorage.removeItem('driveAppCurrentProfile');
+                }
+            };
+
+            // Salva tutti i profili in localStorage quando cambiano
+            const handleSetAllProfiles = (profiles) => {
+                setAllProfiles(profiles);
+                localStorage.setItem('driveAppProfiles', JSON.stringify(profiles));
+            };
+
+            if (isLoading || !allProfiles) {
+                return (
+                    <div className="min-h-screen flex items-center justify-center">
+                        <p className="text-gray-500">Caricamento profili...</p>
+                    </div>
+                );
             }
+
+            if (!currentProfileName) {
+                return (
+                    <LoginView 
+                        allProfiles={allProfiles}
+                        setAllProfiles={handleSetAllProfiles}
+                        setCurrentProfileName={handleSetCurrentProfile}
+                    />
+                );
+            }
+
+            return (
+                <App
+                    currentProfile={{ name: currentProfileName, ...allProfiles[currentProfileName] }}
+                    allProfiles={allProfiles}
+                    setAllProfiles={handleSetAllProfiles}
+                    setCurrentProfileName={handleSetCurrentProfile}
+                />
+            );
         }
 
+        /**
+         * Vista di "Login" per selezionare o creare un profilo studio.
+         */
+        const LoginView = ({ allProfiles, setAllProfiles, setCurrentProfileName }) => {
+            const [showCreateForm, setShowCreateForm] = useState(false);
+            const [newProfileName, setNewProfileName] = useState("");
+            const [newProfilePath, setNewProfilePath] = useState("");
 
-        function App() {
-            const [isLoggedIn, setIsLoggedIn] = useState(false);
-            const [profilo, setProfilo] = useState(null);
-            const [authLoading, setAuthLoading] = useState(true); // Controlla il caricamento della sessione
-            
+            const handleCreateProfile = (e) => {
+                e.preventDefault();
+                const name = newProfileName.trim();
+                const path = newProfilePath.trim();
+                if (!name || !path) {
+                    showToast("Inserisci Nome Studio e Percorso Drive.", 'bg-red-500');
+                    return;
+                }
+                if (allProfiles[name]) {
+                    showToast("Esiste già un profilo con questo nome.", 'bg-yellow-500 text-black');
+                    return;
+                }
+
+                const newProfiles = { ...allProfiles, [name]: { drivePath: path } };
+                setAllProfiles(newProfiles);
+                setCurrentProfileName(name);
+                setNewProfileName("");
+                setNewProfilePath("");
+                setShowCreateForm(false);
+            };
+
+            return (
+                <div className="min-h-screen bg-gray-100 p-4 flex flex-col justify-center items-center">
+                    <div className="bg-white p-6 rounded-xl shadow-2xl w-full max-w-md">
+                        <h1 className="text-2xl font-bold text-center text-gray-800 mb-6">Seleziona Profilo Studio</h1>
+                        
+                        <div className="space-y-3 mb-6">
+                            {Object.keys(allProfiles).map(name => (
+                                <button
+                                    key={name}
+                                    onClick={() => setCurrentProfileName(name)}
+                                    className="w-full text-left p-4 bg-white border-2 border-blue-500 text-blue-600 rounded-lg shadow-sm hover:bg-blue-50 hover:shadow-md transition-all"
+                                >
+                                    <span className="font-bold text-lg">{name}</span>
+                                    <p className="text-sm text-gray-600 truncate">Salva in: {allProfiles[name].drivePath}</p>
+                                </button>
+                            ))}
+                        </div>
+
+                        {showCreateForm ? (
+                            <form onSubmit={handleCreateProfile} className="space-y-4 p-4 border border-gray-200 rounded-lg">
+                                <h2 className="text-lg font-semibold">Nuovo Profilo</h2>
+                                <div>
+                                    <label htmlFor="newProfileName" className="block text-sm font-medium text-gray-600 mb-1">Nome Studio</label>
+                                    <input 
+                                        type="text" id="newProfileName" 
+                                        value={newProfileName} onChange={e => setNewProfileName(e.target.value)}
+                                        className="w-full p-2 border border-gray-300 rounded-lg shadow-sm"
+                                        placeholder="Es. Studio Rossi"
+                                    />
+                                </div>
+                                <div>
+                                    <label htmlFor="newProfilePath" className="block text-sm font-medium text-gray-600 mb-1">Percorso Cartella Drive</label>
+                                    <input 
+                                        type="text" id="newProfilePath"
+                                        value={newProfilePath} onChange={e => setNewProfilePath(e.target.value)}
+                                        className="w-full p-2 border border-gray-300 rounded-lg shadow-sm"
+                                        placeholder="Es. IlMioStudio/Pazienti"
+                                    />
+                                </div>
+                                <div className="flex gap-2">
+                                    <button type="button" onClick={() => setShowCreateForm(false)} className="w-full bg-gray-200 text-gray-700 py-2 px-4 rounded-lg">Annulla</button>
+                                    <button type="submit" className="w-full bg-green-500 text-white py-2 px-4 rounded-lg">Salva</button>
+                                </div>
+                            </form>
+                        ) : (
+                            <button
+                                onClick={() => setShowCreateForm(true)}
+                                className="w-full bg-green-500 text-white font-bold py-3 px-4 rounded-lg shadow-md hover:bg-green-600 transition-colors"
+                            >
+                                Crea Nuovo Profilo
+                            </button>
+                        )}
+                    </div>
+                </div>
+            );
+        };
+
+        // --- APPLICAZIONE PRINCIPALE ---
+        
+        /**
+         * Componente App principale per il caricamento delle foto.
+         * Riceve il profilo corrente come prop.
+         */
+        function App({ currentProfile, allProfiles, setAllProfiles, setCurrentProfileName }) {
             const [cognome, setCognome] = useState('');
             const [nome, setNome] = useState('');
-            // Aggiunto stato per la data, con default a oggi
-            const [dataTest, setDataTest] = useState(new Date().toISOString().split('T')[0]);
+            
+            const [gapiReady, setGapiReady] = useState(false);
+            const [gisReady, setGisReady] = useState(false);
+            const [tokenClient, setTokenClient] = useState(null);
+            const [accessToken, setAccessToken] = useState(null);
 
             const [isUploading, setIsUploading] = useState(false);
             const [uploadProgress, setUploadProgress] = useState('');
             const [stagedFiles, setStagedFiles] = useState({});
+            const [isFileSystemError, setIsFileSystemError] = useState(false);
             
             const [activeCategory, setActiveCategory] = useState(null);
             const [showSettings, setShowSettings] = useState(false);
+            
+            // Il percorso drive è ora gestito nello stato, derivato dal profilo
+            const [drivePath, setDrivePath] = useState(currentProfile.drivePath);
 
             const fileInputRef = useRef(null);
 
-            // Controlla la sessione al caricamento dell'app
+            // Carica le API di Google
             useEffect(() => {
-                const checkSession = async () => {
-                    try {
-                        const data = await apiFetch('check_session.php');
-                        if (data.success) {
-                            setProfilo(data.profilo);
-                            setIsLoggedIn(true);
-                        }
-                    } catch (error) {
-                        console.log("Nessuna sessione attiva.");
-                    } finally {
-                        setAuthLoading(false);
-                    }
-                };
-                checkSession();
-            }, []);
+                // Salva il drivePath del profilo corrente nello stato locale
+                setDrivePath(currentProfile.drivePath);
 
-            const handleLogin = async (username, password) => {
-                try {
-                    const data = await apiFetch('login.php', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ username, password })
+                if (window.location.protocol === 'file:') { setIsFileSystemError(true); return; }
+
+                function handleGapiLoad() { gapi.load('client', initializeGapiClient); }
+                function handleGisLoad() {
+                    const client = google.accounts.oauth2.initTokenClient({
+                        client_id: CLIENT_ID, scope: SCOPES,
+                        callback: (tokenResponse) => { if (tokenResponse.access_token) setAccessToken(tokenResponse.access_token); },
                     });
-                    
-                    if (data.success) {
-                        setProfilo(data.profilo);
-                        setIsLoggedIn(true);
-                        showToast(`Benvenuto, ${data.profilo.nome_studio}!`, 'bg-green-500');
-                    }
-                } catch (error) {
-                    showToast(error.message, 'bg-red-500');
+                    setTokenClient(client);
+                    setGisReady(true);
                 }
-            };
+
+                // Assicura che gli script vengano caricati correttamente
+                const gapiScript = document.querySelector('script[src="https://apis.google.com/js/api.js"]');
+                const gisScript = document.querySelector('script[src="https://accounts.google.com/gsi/client"]');
+                
+                if (gapiScript.loaded) handleGapiLoad();
+                else gapiScript.onload = handleGapiLoad;
+                
+                if (gisScript.loaded) handleGisLoad();
+                else gisScript.onload = handleGisLoad;
+
+                gapiScript.loaded = true;
+                gisScript.loaded = true;
+            }, [currentProfile]); // Si riattiva se cambia il profilo
             
-            const handleLogout = async () => {
-                try {
-                    await apiFetch('logout.php', { method: 'POST' });
-                } catch (error) {
-                    console.error("Errore durante il logout:", error);
-                } finally {
-                    setIsLoggedIn(false);
-                    setProfilo(null);
-                    setShowSettings(false);
-                    showToast("Disconnessione riuscita.", 'bg-gray-500');
+            async function initializeGapiClient() {
+                await gapi.client.init({ apiKey: API_KEY, discoveryDocs: ["https://www.googleapis.com/discovery/v1/apis/drive/v3/rest"] });
+                setGapiReady(true);
+            }
+
+            // *** FIX: Tentativo di login silente all'avvio ***
+            // Prova a ottenere un token senza popup se l'utente è già loggato/ha dato consenso
+            useEffect(() => {
+                if (gapiReady && gisReady && tokenClient && !accessToken) {
+                    tokenClient.requestAccessToken({ prompt: 'none' });
                 }
-            };
+            }, [gapiReady, gisReady, tokenClient, accessToken]);
+
+            // Bottone di autenticazione manuale (mostra sempre il popup)
+            function handleAuthClick() {
+                if (tokenClient) {
+                    tokenClient.requestAccessToken({ prompt: 'consent' }); 
+                } else {
+                    showToast("Client di autenticazione non pronto. Riprova tra poco.", 'bg-yellow-500 text-black');
+                }
+            }
+
+            function handleSignoutClick() {
+                if (accessToken) {
+                    google.accounts.oauth2.revoke(accessToken, () => { 
+                        setAccessToken(null); 
+                        showToast("Disconnessione riuscita.", 'bg-gray-500'); 
+                    });
+                }
+            }
 
             const handleTakePhoto = (groupName) => {
-                if (!cognome || !nome) {
-                    showToast("Inserisci Nome e Cognome del paziente.", 'bg-yellow-500 text-black');
-                    return;
-                }
+                if (!cognome || !nome) { showToast("Inserisci Nome e Cognome del paziente.", 'bg-yellow-500 text-black'); return; }
                 fileInputRef.current.onchange = (event) => handleFileChange(event, groupName);
                 fileInputRef.current.click();
             };
@@ -181,39 +372,46 @@
             };
             
             const handleUploadAll = async () => {
-                if (Object.keys(stagedFiles).length === 0) {
-                    showToast("Nessuna foto da caricare.", 'bg-red-500');
+                if (!accessToken || Object.keys(stagedFiles).length === 0) {
+                    showToast(accessToken ? "Nessuna foto da caricare." : "Autenticazione Google Drive necessaria.", 'bg-red-500');
                     return;
                 }
                 setIsUploading(true);
                 const filesToUpload = Object.entries(stagedFiles);
-
                 try {
+                    // Usa il drivePath dallo stato (che viene dal profilo)
+                    const pathParts = drivePath.split('/').filter(p => p.trim() !== '');
+                    let currentParentId = 'root';
+                    
+                    // 1. Trova o crea la cartella base dello studio
+                    for (const part of pathParts) {
+                        currentParentId = await findOrCreateFolder(part, currentParentId);
+                    }
+                    const baseFolderId = currentParentId;
+
+                    // *** NOVITÀ: Aggiunge la data (YYYY-MM-DD) alla cartella paziente ***
+                    const dateString = new Date().toISOString().split('T')[0];
+                    const patientFolderName = `${cognome.trim()}_${nome.trim()}_${dateString}`;
+                    const patientFolderId = await findOrCreateFolder(patientFolderName, baseFolderId);
+
+                    // 3. Carica i file nelle sottocartelle
                     for (let i = 0; i < filesToUpload.length; i++) {
                         const [groupName, { file }] = filesToUpload[i];
                         setUploadProgress(`Caricamento ${i + 1}/${filesToUpload.length}: "${groupName}"...`);
                         
-                        // Prepara FormData per l'invio
-                        const formData = new FormData();
-                        formData.append('foto', file);
-                        formData.append('groupName', groupName);
-                        formData.append('cognome', cognome.trim());
-                        formData.append('nome', nome.trim());
-                        formData.append('data', dataTest); // Aggiunge la data
-
-                        // Invia il file al server (upload.php)
-                        const data = await apiFetch('upload.php', {
-                            method: 'POST',
-                            body: formData // Non serve 'Content-Type', il browser lo imposta per FormData
-                        });
-
-                        if (!data.success) {
-                            throw new Error(data.message || `Errore caricamento ${groupName}`);
+                        let mainCategory = Object.keys(ALLERGEN_STRUCTURE).find(cat => ALLERGEN_STRUCTURE[cat].includes(groupName));
+                        
+                        if (groupName === "Controllo Positivo (Istamina)") {
+                            // Carica il controllo positivo direttamente nella cartella paziente
+                            await uploadSingleFile(file, groupName, patientFolderId);
+                        } else if (mainCategory) {
+                             // Carica gli altri nelle rispettive sottocartelle (Alimenti, Inalanti, ...)
+                             const categoryFolderId = await findOrCreateFolder(mainCategory, patientFolderId);
+                             await uploadSingleFile(file, groupName, categoryFolderId);
                         }
                     }
-                    
                     showToast('Tutti i file sono stati caricati!', 'bg-green-500');
-                    handleNewPatient(true); // Resetta l'interfaccia
+                    handleNewPatient(true); // Resetta per il prossimo paziente
                 } catch (error) {
                     showToast(`Errore durante il caricamento: ${error.message}`, 'bg-red-500');
                 } finally {
@@ -221,59 +419,108 @@
                     setUploadProgress('');
                 }
             };
+
+            // Funzione di upload singola (invariata)
+            async function uploadSingleFile(file, groupName, parentFolderId) {
+                const fileName = `${groupName}.jpg`;
+                const metadata = { name: fileName, parents: [parentFolderId], mimeType: 'image/jpeg' };
+                const form = new FormData();
+                form.append('metadata', new Blob([JSON.stringify(metadata)], { type: 'application/json' }));
+                form.append('file', file);
+                const response = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
+                    method: 'POST', headers: new Headers({ 'Authorization': 'Bearer ' + accessToken }), body: form,
+                });
+                const result = await response.json();
+                if (result.error) throw new Error(`${result.error.message} (file: ${fileName})`);
+            }
+
+            // Funzione findOrCreate (invariata)
+            async function findOrCreateFolder(name, parentId) {
+                const query = `mimeType='application/vnd.google-apps.folder' and trashed=false and name='${name}' and '${parentId}' in parents`;
+                const response = await gapi.client.drive.files.list({ q: query, fields: 'files(id)', spaces: 'drive' });
+                if (response.result.files && response.result.files.length > 0) {
+                    return response.result.files[0].id;
+                }
+                const fileMetadata = { name, mimeType: 'application/vnd.google-apps.folder', parents: [parentId] };
+                const createResponse = await gapi.client.drive.files.create({ resource: fileMetadata, fields: 'id' });
+                return createResponse.result.id;
+            }
             
             const handleNewPatient = (force = false) => {
                 const confirmed = force || Object.keys(stagedFiles).length === 0 || confirm("Hai foto non caricate. Vuoi iniziare con un nuovo paziente? Le foto andranno perse.");
                 if (confirmed) {
-                    setStagedFiles({}); 
-                    setCognome(''); 
-                    setNome(''); 
-                    setDataTest(new Date().toISOString().split('T')[0]); // Resetta la data
-                    setActiveCategory(null);
+                    setStagedFiles({}); setCognome(''); setNome(''); setActiveCategory(null);
                 }
             };
 
-            // Viste
-            if (authLoading) {
-                return (
-                    <div className="min-h-screen flex items-center justify-center">
-                        <p className="text-gray-500 text-lg">Caricamento...</p>
-                    </div>
-                );
-            }
+            // Gestisce il salvataggio del percorso drive modificato
+            const handleSaveSettings = (newPath) => {
+                setDrivePath(newPath); // Aggiorna lo stato locale
+                // Aggiorna la lista globale dei profili
+                const updatedProfiles = {
+                    ...allProfiles,
+                    [currentProfile.name]: {
+                        ...allProfiles[currentProfile.name],
+                        drivePath: newPath
+                    }
+                };
+                setAllProfiles(updatedProfiles); // Salva in localStorage
+                showToast("Impostazioni salvate.", "bg-green-500");
+                setShowSettings(false);
+            };
 
-            if (!isLoggedIn) {
-                return <LoginScreen onLogin={handleLogin} />;
-            }
+            // Gestisce il cambio profilo
+            const handleChangeProfile = () => {
+                setShowSettings(false);
+                setCurrentProfileName(null); // Torna alla vista Login
+            };
+
+            if (isFileSystemError) return ( <div className="min-h-screen bg-red-50 flex items-center justify-center p-4"><div className="bg-white p-8 rounded-xl shadow-2xl max-w-lg text-center"><h1 className="text-2xl font-bold text-red-700 mb-4">Errore di Avvio</h1><p className="text-gray-700 mb-2">Questa applicazione non può essere eseguita da un file locale (<code className="bg-red-100 text-red-900 p-1 rounded">file://</code>).</p><p className="text-gray-700 font-medium">Per funzionare, deve essere avviata tramite un server web locale (es. con l'estensione "Live Server" di VS Code).</p></div></div> );
 
             return (
                 <div className="min-h-screen bg-gray-50 p-4 pb-20 max-w-2xl mx-auto">
-                    {showSettings && <SettingsModal onLogout={handleLogout} onClose={() => setShowSettings(false)} profilo={profilo} />}
+                    {showSettings && 
+                        <SettingsModal 
+                            drivePath={drivePath} 
+                            setDrivePath={setDrivePath}
+                            onClose={() => setShowSettings(false)} 
+                            onSave={handleSaveSettings}
+                            onChangeProfile={handleChangeProfile}
+                            onAuth={handleAuthClick} 
+                            onSignout={handleSignoutClick} 
+                            accessToken={accessToken}
+                            gisReady={gisReady} // *** FIX: Passa lo stato di 'gisReady'
+                        />
+                    }
 
                     <header className="bg-white p-4 rounded-xl shadow-md mb-6 sticky top-4 z-10">
                         <div className="flex items-center justify-between">
-                            <h1 className="text-2xl font-bold text-gray-800">Caricamento Foto</h1>
-                             <button onClick={() => setShowSettings(true)} className="text-gray-500 hover:text-blue-600">
+                            <div>
+                                <h1 className="text-2xl font-bold text-gray-800">Caricamento Foto</h1>
+                                <p className="text-sm text-blue-600 font-medium">{currentProfile.name}</p>
+                            </div>
+                             <button onClick={() => setShowSettings(true)} className="text-gray-500 hover:text-blue-600 p-2">
                                 <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
                              </button>
                         </div>
-                         <p className="text-sm text-green-600 font-medium mt-2">Connesso come: {profilo?.nome_studio}</p>
+                         {!(gapiReady && gisReady) && <p className="text-center text-gray-500 mt-2">Inizializzazione API Google...</p>}
+                         {gapiReady && gisReady && !accessToken && <p className="text-center text-red-500 font-medium mt-2">Accesso a Google Drive richiesto. Vai nelle impostazioni per accedere.</p>}
+                         {gapiReady && gisReady && accessToken && <p className="text-center text-green-600 font-medium mt-2">Accesso a Google Drive attivo.</p>}
                     </header>
                     
                     <MainView 
                         cognome={cognome} setCognome={setCognome} 
                         nome={nome} setNome={setNome} 
-                        dataTest={dataTest} setDataTest={setDataTest}
                         handleNewPatient={handleNewPatient} 
                         activeCategory={activeCategory} setActiveCategory={setActiveCategory} 
                         handleTakePhoto={handleTakePhoto} 
-                        stagedFiles={stagedFiles} isUploading={isUploading}
+                        stagedFiles={stagedFiles} accessToken={accessToken} isUploading={isUploading}
                     />
                     
                     <FileList stagedFiles={stagedFiles} handleTakePhoto={handleTakePhoto} />
 
-                    <button onClick={handleUploadAll} disabled={isUploading || Object.keys(stagedFiles).length === 0} className="w-full bg-green-500 text-white font-bold py-4 px-4 rounded-lg shadow-lg hover:bg-green-600 transition-colors disabled:bg-gray-300 disabled:cursor-not-allowed text-lg sticky bottom-4 z-10">
-                        {isUploading ? uploadProgress : `Carica ${Object.keys(stagedFiles).length} File`}
+                    <button onClick={handleUploadAll} disabled={!accessToken || isUploading || Object.keys(stagedFiles).length === 0} className="w-full bg-green-500 text-white font-bold py-4 px-4 rounded-lg shadow-lg hover:bg-green-600 transition-colors disabled:bg-gray-300 disabled:cursor-not-allowed text-lg sticky bottom-4 z-10">
+                        {isUploading ? uploadProgress : `Carica ${Object.keys(stagedFiles).length} File su Drive`}
                     </button>
 
                     <input type="file" accept="image/*" capture="environment" ref={fileInputRef} />
@@ -281,83 +528,55 @@
             );
         }
 
-        const LoginScreen = ({ onLogin }) => {
-            const [username, setUsername] = useState('');
-            const [password, setPassword] = useState('');
-            const [isLoading, setIsLoading] = useState(false);
-
-            const handleSubmit = async (e) => {
-                e.preventDefault();
-                if (!username || !password) {
-                    showToast("Inserisci username e password.", 'bg-yellow-500 text-black');
-                    return;
-                }
-                setIsLoading(true);
-                await onLogin(username, password);
-                setIsLoading(false);
+        /**
+         * Modale delle Impostazioni
+         */
+        const SettingsModal = ({ drivePath, setDrivePath, onClose, onSave, onChangeProfile, onAuth, onSignout, accessToken, gisReady }) => {
+            const [localPath, setLocalPath] = useState(drivePath);
+            
+            const handleSaveClick = () => {
+                onSave(localPath); // Passa il nuovo percorso al genitore
             };
-
+            
             return (
-                <div className="min-h-screen bg-gray-100 flex items-center justify-center p-4">
-                    <div className="bg-white p-8 rounded-xl shadow-2xl max-w-sm w-full">
-                        <h1 className="text-3xl font-bold text-center text-gray-800 mb-8">Login</h1>
-                        <form onSubmit={handleSubmit} className="space-y-6">
-                            <div>
-                                <label htmlFor="username" className="block text-sm font-medium text-gray-700 mb-1">Username</label>
-                                <input 
-                                    type="text" 
-                                    id="username" 
-                                    value={username} 
-                                    onChange={e => setUsername(e.target.value)} 
-                                    className="w-full p-3 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                                    autoCapitalize="none"
-                                />
-                            </div>
-                            <div>
-                                <label htmlFor="password" className="block text-sm font-medium text-gray-700 mb-1">Password</label>
-                                <input 
-                                    type="password" 
-                                    id="password" 
-                                    value={password} 
-                                    onChange={e => setPassword(e.target.value)} 
-                                    className="w-full p-3 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                                />
-                            </div>
-                            <button 
-                                type="submit" 
-                                disabled={isLoading}
-                                className="w-full bg-blue-600 text-white font-bold py-3 px-4 rounded-lg shadow-lg hover:bg-blue-700 transition-colors disabled:bg-gray-400"
-                            >
-                                {isLoading ? 'Accesso...' : 'Accedi'}
-                            </button>
-                        </form>
-                    </div>
-                </div>
-            );
-        };
-
-        const SettingsModal = ({ onLogout, onClose, profilo }) => {
-            return (
-                <div className="modal-overlay" style={{ backgroundColor: 'rgba(0,0,0,0.5)', position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50 }}>
+                <div className="modal-overlay">
                     <div className="bg-white rounded-xl shadow-2xl p-6 w-11/12 max-w-lg m-4 space-y-4">
                         <div className="flex justify-between items-center border-b pb-2">
                             <h2 className="text-xl font-bold">Impostazioni</h2>
                             <button onClick={onClose} className="text-gray-500 text-2xl">&times;</button>
                         </div>
                         <div>
-                            <h3 className="text-lg font-semibold mb-2">Profilo Connesso</h3>
-                            <p className="text-gray-700"><span className="font-medium">Studio:</span> {profilo?.nome_studio}</p>
-                            <p className="text-gray-700"><span className="font-medium">Percorso:</span> {profilo?.drive_path}</p>
+                            <label htmlFor="drivePathInput" className="block text-sm font-medium text-gray-600 mb-1">Percorso Cartella su Drive</label>
+                            <input type="text" id="drivePathInput" value={localPath} onChange={e => setLocalPath(e.target.value)} className="w-full p-2 border border-gray-300 rounded-lg shadow-sm" placeholder="Es. Cartella1/Cartella2"/>
+                            <p className="text-xs text-gray-500 mt-1">Percorso per il profilo studio corrente.</p>
                         </div>
-                        <div className="pt-4">
-                            <button onClick={onLogout} className="w-full bg-red-500 text-white py-2 px-4 rounded-lg">Disconnetti</button>
+                        <div>
+                            <h3 className="text-lg font-semibold mb-2">Account Google</h3>
+                            {accessToken ? 
+                                <button onClick={onSignout} className="w-full bg-red-500 text-white py-2 px-4 rounded-lg">Disconnetti</button> :
+                                // *** FIX: Disabilita il bottone se 'gisReady' è false o se l'utente è già loggato ***
+                                <button 
+                                    onClick={onAuth} 
+                                    disabled={!gisReady || !!accessToken}
+                                    className="w-full bg-blue-500 text-white py-2 px-4 rounded-lg disabled:bg-gray-300 disabled:cursor-not-allowed"
+                                >
+                                    {gisReady ? "Accedi a Google" : "Inizializzazione..."}
+                                </button>
+                            }
+                        </div>
+                        <div className="border-t pt-4 space-y-2">
+                             <button onClick={onChangeProfile} className="w-full bg-yellow-500 text-black font-bold py-2 px-6 rounded-lg">Cambia Profilo Studio</button>
+                             <button onClick={handleSaveClick} className="w-full bg-green-500 text-white font-bold py-2 px-6 rounded-lg">Salva Impostazioni</button>
                         </div>
                     </div>
                 </div>
             );
         };
         
-        const MainView = ({ cognome, setCognome, nome, setNome, dataTest, setDataTest, handleNewPatient, activeCategory, setActiveCategory, handleTakePhoto, stagedFiles, isUploading }) => {
+        /**
+         * Vista Principale (Dati Paziente e Categorie)
+         */
+        const MainView = ({ cognome, setCognome, nome, setNome, handleNewPatient, activeCategory, setActiveCategory, handleTakePhoto, stagedFiles, accessToken, isUploading }) => {
              const renderSubgroupView = () => (
                 <div className="bg-white p-6 rounded-xl shadow-md mb-6 space-y-4">
                     <div className="flex items-center justify-between border-b pb-2 mb-4">
@@ -366,7 +585,7 @@
                     </div>
                     <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
                         {ALLERGEN_STRUCTURE[activeCategory].map(groupName => (
-                             <button key={groupName} onClick={() => handleTakePhoto(groupName)} disabled={isUploading} className={`p-4 text-center font-medium rounded-lg shadow-sm transition-all text-sm ${stagedFiles[groupName] ? 'bg-green-100 border-2 border-green-500 text-green-800' : 'bg-white text-blue-600 border-2 border-blue-500 hover:bg-blue-50' } disabled:bg-gray-200 disabled:text-gray-400 disabled:border-gray-300 disabled:cursor-not-allowed`}>
+                             <button key={groupName} onClick={() => handleTakePhoto(groupName)} disabled={isUploading || !accessToken} className={`p-4 text-center font-medium rounded-lg shadow-sm transition-all text-sm ${stagedFiles[groupName] ? 'bg-green-100 border-2 border-green-500 text-green-800' : 'bg-white text-blue-600 border-2 border-blue-500 hover:bg-blue-50' } disabled:bg-gray-200 disabled:text-gray-400 disabled:border-gray-300 disabled:cursor-not-allowed`}>
                                 {groupName} {stagedFiles[groupName] ? ' (✓)' : ''}
                             </button>
                         ))}
@@ -384,7 +603,7 @@
                             </button>
                         ))}
                     </div>
-                     <button onClick={() => handleTakePhoto("Controllo Positivo (Istamina)")} disabled={isUploading} className={`w-full font-bold py-3 px-4 rounded-lg shadow-md transition-colors ${stagedFiles["Controllo Positivo (Istamina)"] ? 'bg-green-100 border-2 border-green-500 text-green-800' : 'bg-blue-100 text-blue-700 hover:bg-blue-200'} disabled:bg-gray-300 disabled:cursor-not-allowed`}>
+                     <button onClick={() => handleTakePhoto("Controllo Positivo (Istamina)")} disabled={!accessToken || isUploading} className={`w-full font-bold py-3 px-4 rounded-lg shadow-md transition-colors ${stagedFiles["Controllo Positivo (Istamina)"] ? 'bg-green-100 border-2 border-green-500 text-green-800' : 'bg-blue-100 text-blue-700 hover:bg-blue-200'} disabled:bg-gray-300 disabled:cursor-not-allowed`}>
                         Controllo Positivo {stagedFiles["Controllo Positivo (Istamina)"] ? ' (✓)' : ''}
                     </button>
                 </div>
@@ -404,16 +623,15 @@
                             <label htmlFor="nome" className="block text-sm font-medium text-gray-600 mb-1">Nome</label>
                             <input type="text" id="nome" value={nome} onChange={e => setNome(e.target.value)} className="w-full p-2 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"/>
                         </div>
-                        <div>
-                            <label htmlFor="data" className="block text-sm font-medium text-gray-600 mb-1">Data Test</label>
-                            <input type="date" id="data" value={dataTest} onChange={e => setDataTest(e.target.value)} className="w-full p-2 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"/>
-                        </div>
                     </div>
                     {activeCategory ? renderSubgroupView() : renderMainCategoryView()}
                 </>
             )
         };
         
+        /**
+         * Lista dei file pronti per l'upload
+         */
         const FileList = ({ stagedFiles, handleTakePhoto }) => (
             <div className="bg-white p-6 rounded-xl shadow-md mb-6">
                 <h2 className="text-xl font-semibold text-gray-700 border-b pb-2 mb-4">File Pronti per il Caricamento</h2>
@@ -435,7 +653,8 @@
             </div>
         );
 
-        ReactDOM.render(<App />, document.getElementById('root'));
+        // Avvia l'applicazione renderizzando il ProfileWrapper
+        ReactDOM.render(<ProfileWrapper />, document.getElementById('root'));
     </script>
 </body>
 </html>
