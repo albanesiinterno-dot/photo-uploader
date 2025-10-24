@@ -100,26 +100,52 @@
 
             const fileInputRef = useRef(null);
 
+            // *** CORREZIONE: Gestione race condition caricamento script ***
             useEffect(() => {
                 const savedPath = localStorage.getItem('drivePath');
                 if (savedPath) setDrivePath(savedPath);
 
                 if (window.location.protocol === 'file:') { setIsFileSystemError(true); return; }
 
-                function handleGapiLoad() { gapi.load('client', initializeGapiClient); }
+                let gapiLoaded = false;
+                let gisLoaded = false;
+
+                function handleGapiLoad() { 
+                    if (gapiLoaded) return;
+                    gapiLoaded = true;
+                    if (window.gapi) {
+                        gapi.load('client', initializeGapiClient); 
+                    }
+                }
+                
                 function handleGisLoad() {
-                    const client = google.accounts.oauth2.initTokenClient({
-                        client_id: CLIENT_ID, scope: SCOPES,
-                        callback: (tokenResponse) => { if (tokenResponse.access_token) setAccessToken(tokenResponse.access_token); },
-                    });
-                    setTokenClient(client);
-                    setGisReady(true); // *** CORREZIONE: Segnala che il client GIS è pronto ***
+                    if (gisLoaded) return;
+                    gisLoaded = true;
+                    if (window.google && window.google.accounts) {
+                        const client = google.accounts.oauth2.initTokenClient({
+                            client_id: CLIENT_ID, scope: SCOPES,
+                            callback: (tokenResponse) => { if (tokenResponse.access_token) setAccessToken(tokenResponse.access_token); },
+                        });
+                        setTokenClient(client);
+                        setGisReady(true);
+                    }
                 }
 
-                const gapiScript = document.querySelector('script[src="https://apis.google.com/js/api.js"]');
-                gapiScript.onload = handleGapiLoad;
-                const gisScript = document.querySelector('script[src="https://accounts.google.com/gsi/client"]');
-                gisScript.onload = handleGisLoad;
+                // Controlla se gli script sono già stati caricati
+                if (window.gapi) {
+                    handleGapiLoad();
+                } else {
+                    const gapiScript = document.querySelector('script[src="https://apis.google.com/js/api.js"]');
+                    if (gapiScript) gapiScript.onload = handleGapiLoad;
+                }
+                
+                if (window.google && window.google.accounts) {
+                    handleGisLoad();
+                } else {
+                    const gisScript = document.querySelector('script[src="https://accounts.google.com/gsi/client"]');
+                    if (gisScript) gisScript.onload = handleGisLoad;
+                }
+
             }, []);
             
             async function initializeGapiClient() {
@@ -128,7 +154,6 @@
             }
 
             function handleAuthClick() {
-                // *** CORREZIONE: tokenClient viene controllato prima di chiamare (il pulsante è comunque disabilitato) ***
                 if (tokenClient) tokenClient.requestAccessToken({}); 
                 else showToast("Client di autenticazione non pronto.", 'bg-yellow-500 text-black');
             }
@@ -253,7 +278,6 @@
 
             return (
                 <div className="min-h-screen bg-gray-50 p-4 pb-20 max-w-2xl mx-auto">
-                    {/* *** MODIFICA: Passa gisReady al modal *** */}
                     {showSettings && <SettingsModal 
                         drivePath={drivePath} 
                         setDrivePath={setDrivePath} 
@@ -290,7 +314,6 @@
                         {isUploading ? uploadProgress : `Carica ${Object.keys(stagedFiles).length} File su Drive`}
                     </button>
 
-                    {/* *** MODIFICA: Rimosso capture="environment" per compatibilità iOS *** */}
                     <input type="file" accept="image/*" ref={fileInputRef} />
                 </div>
             );
@@ -320,7 +343,6 @@
                             <h3 className="text-lg font-semibold mb-2">Account Google</h3>
                             {accessToken ? 
                                 <button onClick={onSignout} className="w-full bg-red-500 text-white py-2 px-4 rounded-lg">Disconnetti</button> :
-                                /* *** CORREZIONE: Disabilita il pulsante se gisReady è false *** */
                                 <button 
                                     onClick={onAuth} 
                                     disabled={!gisReady} 
@@ -346,7 +368,6 @@
                         <button onClick={() => setActiveCategory(null)} className="text-sm text-blue-600 hover:underline">Indietro</button>
                     </div>
                     <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
-                        {/* Questo ora ciclerà solo sui gruppi di "Altri allergeni" */}
                         {ALLERGEN_STRUCTURE[activeCategory].map(groupName => (
                              <button 
                                 key={groupName} 
@@ -365,13 +386,11 @@
                 </div>
             );
             
-            // *** MODIFICA: Vista principale aggiornata con pulsanti diretti ***
             const renderMainCategoryView = () => (
                  <div className="bg-white p-6 rounded-xl shadow-md mb-6 space-y-4">
                     <h2 className="text-xl font-semibold text-gray-700 border-b pb-2">2. Scatta Foto</h2>
                     
                     <div className="grid grid-cols-2 gap-4">
-                        {/* Pulsante diretto per Alimenti */}
                         <button 
                             onClick={() => handleTakePhoto("Alimenti")} 
                             disabled={!accessToken || isUploading} 
@@ -384,7 +403,6 @@
                             Alimenti {stagedFiles["Alimenti"] ? ' (✓)' : ''}
                         </button>
                         
-                        {/* Pulsante diretto per Inalanti */}
                         <button 
                             onClick={() => handleTakePhoto("Inalanti")} 
                             disabled={!accessToken || isUploading} 
@@ -397,7 +415,6 @@
                             Inalanti {stagedFiles["Inalanti"] ? ' (✓)' : ''}
                         </button>
 
-                        {/* Pulsanti per categorie con sottogruppi (es. Altri allergeni) */}
                         {Object.keys(ALLERGEN_STRUCTURE).map(category => (
                             <button 
                                 key={category} 
@@ -411,7 +428,8 @@
                     </div>
                     
                      <button onClick={() => handleTakePhoto("Controllo Positivo (Istamina)")} disabled={!accessToken || isUploading} className={`w-full font-bold py-3 px-4 rounded-lg shadow-md transition-colors ${stagedFiles["Controllo Positivo (Istamina)"] ? 'bg-green-100 border-2 border-green-500 text-green-800' : 'bg-blue-100 text-blue-700 hover:bg-blue-200'} disabled:bg-gray-300 disabled:text-gray-500 disabled:cursor-not-allowed`}>
-                        Controllo Positivo {stagedFiles["Controlto Positivo (Istamina)"] ? ' (✓)' : ''}
+                        {/* *** CORREZIONE: Refuso "Controlto" -> "Controllo" *** */}
+                        Controllo Positivo {stagedFiles["Controllo Positivo (Istamina)"] ? ' (✓)' : ''}
                     </button>
                 </div>
             );
@@ -462,3 +480,4 @@
     </script>
 </body>
 </html>
+
