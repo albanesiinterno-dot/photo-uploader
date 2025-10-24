@@ -66,9 +66,8 @@
         const CLIENT_ID = '1091891823693-m0ggq3m0jj5mf72g4ngdrcvoic7fvsrv.apps.googleusercontent.com';
         const SCOPES = 'https://www.googleapis.com/auth/drive';
 
+        // *** MODIFICA: Struttura semplificata. Solo "Altri allergeni" ha sottocategorie. ***
         const ALLERGEN_STRUCTURE = {
-            "Alimenti": ["Alimenti Gruppo 1", "Alimenti Gruppo 2", "Alimenti Gruppo 3", "Alimenti Gruppo 4"],
-            "Inalanti": ["Inalanti Gruppo 1", "Inalanti Gruppo 2", "Inalanti Gruppo 3"],
             "Altri allergeni": ["Leguminose", "Pesci e Molluschi", "Rosacee", "Test Speciali", "Latex"]
         };
         
@@ -114,7 +113,7 @@
                         callback: (tokenResponse) => { if (tokenResponse.access_token) setAccessToken(tokenResponse.access_token); },
                     });
                     setTokenClient(client);
-                    setGisReady(true);
+                    setGisReady(true); // *** CORREZIONE: Segnala che il client GIS è pronto ***
                 }
 
                 const gapiScript = document.querySelector('script[src="https://apis.google.com/js/api.js"]');
@@ -129,7 +128,7 @@
             }
 
             function handleAuthClick() {
-                // Rimuovendo 'prompt', Google gestirà la sessione automaticamente.
+                // *** CORREZIONE: tokenClient viene controllato prima di chiamare (il pulsante è comunque disabilitato) ***
                 if (tokenClient) tokenClient.requestAccessToken({}); 
                 else showToast("Client di autenticazione non pronto.", 'bg-yellow-500 text-black');
             }
@@ -149,9 +148,7 @@
             const handleFileChange = (event, groupName) => {
                 const file = event.target.files[0];
                 if (file) {
-                    // *** CORREZIONE: Usa URL.createObjectURL per efficienza di memoria ***
                     const previewUrl = URL.createObjectURL(file);
-                    // Pulisce l'URL dell'anteprima precedente se esiste per liberare memoria
                     if (stagedFiles[groupName] && stagedFiles[groupName].preview) {
                         URL.revokeObjectURL(stagedFiles[groupName].preview);
                     }
@@ -186,12 +183,26 @@
                     for (let i = 0; i < filesToUpload.length; i++) {
                         const [groupName, { file }] = filesToUpload[i];
                         setUploadProgress(`Caricamento ${i + 1}/${filesToUpload.length}: "${groupName}"...`);
+                        
+                        // *** MODIFICA: Logica di caricamento aggiornata ***
+                        // Cerca se appartiene a una sottocartella (es. "Altri allergeni")
                         let mainCategory = Object.keys(ALLERGEN_STRUCTURE).find(cat => ALLERGEN_STRUCTURE[cat].includes(groupName));
+                        
                         if (groupName === "Controllo Positivo (Istamina)") {
+                            // Carica nella cartella paziente
                             await uploadSingleFile(file, groupName, patientFolderId);
+                        } else if (groupName === "Alimenti" || groupName === "Inalanti") {
+                            // Crea una cartella per "Alimenti" o "Inalanti" e carica lì
+                            const categoryFolderId = await findOrCreateFolder(groupName, patientFolderId);
+                            await uploadSingleFile(file, groupName, categoryFolderId);
                         } else if (mainCategory) {
+                            // Appartiene a "Altri allergeni", crea la sottocartella
                              const categoryFolderId = await findOrCreateFolder(mainCategory, patientFolderId);
                              await uploadSingleFile(file, groupName, categoryFolderId);
+                        } else {
+                            // Fallback: carica direttamente nella cartella paziente
+                            console.warn(`Nessuna categoria trovata per ${groupName}, caricamento nella root del paziente.`);
+                            await uploadSingleFile(file, groupName, patientFolderId);
                         }
                     }
                     showToast('Tutti i file sono stati caricati!', 'bg-green-500');
@@ -231,7 +242,6 @@
             const handleNewPatient = (force = false) => {
                 const confirmed = force || Object.keys(stagedFiles).length === 0 || confirm("Hai foto non caricate. Vuoi iniziare con un nuovo paziente? Le foto andranno perse.");
                 if (confirmed) {
-                    // Pulisce gli URL delle anteprime per liberare memoria
                     Object.values(stagedFiles).forEach(({preview}) => {
                         if (preview) URL.revokeObjectURL(preview);
                     });
@@ -243,7 +253,16 @@
 
             return (
                 <div className="min-h-screen bg-gray-50 p-4 pb-20 max-w-2xl mx-auto">
-                    {showSettings && <SettingsModal drivePath={drivePath} setDrivePath={setDrivePath} onClose={() => setShowSettings(false)} onAuth={handleAuthClick} onSignout={handleSignoutClick} accessToken={accessToken} />}
+                    {/* *** MODIFICA: Passa gisReady al modal *** */}
+                    {showSettings && <SettingsModal 
+                        drivePath={drivePath} 
+                        setDrivePath={setDrivePath} 
+                        onClose={() => setShowSettings(false)} 
+                        onAuth={handleAuthClick} 
+                        onSignout={handleSignoutClick} 
+                        accessToken={accessToken}
+                        gisReady={gisReady} 
+                    />}
 
                     <header className="bg-white p-4 rounded-xl shadow-md mb-6 sticky top-4 z-10">
                         <div className="flex items-center justify-between">
@@ -271,12 +290,13 @@
                         {isUploading ? uploadProgress : `Carica ${Object.keys(stagedFiles).length} File su Drive`}
                     </button>
 
-                    <input type="file" accept="image/*" capture="environment" ref={fileInputRef} />
+                    {/* *** MODIFICA: Rimosso capture="environment" per compatibilità iOS *** */}
+                    <input type="file" accept="image/*" ref={fileInputRef} />
                 </div>
             );
         }
 
-        const SettingsModal = ({ drivePath, setDrivePath, onClose, onAuth, onSignout, accessToken }) => {
+        const SettingsModal = ({ drivePath, setDrivePath, onClose, onAuth, onSignout, accessToken, gisReady }) => {
             const [localPath, setLocalPath] = useState(drivePath);
             const handleSave = () => {
                 setDrivePath(localPath);
@@ -300,7 +320,14 @@
                             <h3 className="text-lg font-semibold mb-2">Account Google</h3>
                             {accessToken ? 
                                 <button onClick={onSignout} className="w-full bg-red-500 text-white py-2 px-4 rounded-lg">Disconnetti</button> :
-                                <button onClick={onAuth} className="w-full bg-blue-500 text-white py-2 px-4 rounded-lg">Accedi a Google</button>
+                                /* *** CORREZIONE: Disabilita il pulsante se gisReady è false *** */
+                                <button 
+                                    onClick={onAuth} 
+                                    disabled={!gisReady} 
+                                    className="w-full bg-blue-500 text-white py-2 px-4 rounded-lg disabled:bg-gray-300 disabled:cursor-not-allowed"
+                                >
+                                    {gisReady ? "Accedi a Google" : "Inizializzazione..."}
+                                </button>
                             }
                         </div>
                         <div className="flex justify-end pt-4">
@@ -319,8 +346,18 @@
                         <button onClick={() => setActiveCategory(null)} className="text-sm text-blue-600 hover:underline">Indietro</button>
                     </div>
                     <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+                        {/* Questo ora ciclerà solo sui gruppi di "Altri allergeni" */}
                         {ALLERGEN_STRUCTURE[activeCategory].map(groupName => (
-                             <button key={groupName} onClick={() => handleTakePhoto(groupName)} disabled={isUploading || !accessToken} className={`p-4 text-center font-medium rounded-lg shadow-sm transition-all text-sm ${stagedFiles[groupName] ? 'bg-green-100 border-2 border-green-500 text-green-800' : 'bg-white text-blue-600 border-2 border-blue-500 hover:bg-blue-50' } disabled:bg-gray-200 disabled:text-gray-400 disabled:border-gray-300 disabled:cursor-not-allowed`}>
+                             <button 
+                                key={groupName} 
+                                onClick={() => handleTakePhoto(groupName)} 
+                                disabled={isUploading || !accessToken} 
+                                className={`p-4 text-center font-medium rounded-lg shadow-sm transition-all text-sm ${
+                                    stagedFiles[groupName] 
+                                        ? 'bg-green-100 border-2 border-green-500 text-green-800' 
+                                        : 'bg-white text-blue-600 border-2 border-blue-500 hover:bg-blue-50' 
+                                } disabled:bg-gray-200 disabled:text-gray-400 disabled:border-gray-300 disabled:cursor-not-allowed`}
+                            >
                                 {groupName} {stagedFiles[groupName] ? ' (✓)' : ''}
                             </button>
                         ))}
@@ -328,21 +365,57 @@
                 </div>
             );
             
+            // *** MODIFICA: Vista principale aggiornata con pulsanti diretti ***
             const renderMainCategoryView = () => (
                  <div className="bg-white p-6 rounded-xl shadow-md mb-6 space-y-4">
                     <h2 className="text-xl font-semibold text-gray-700 border-b pb-2">2. Scatta Foto</h2>
+                    
                     <div className="grid grid-cols-2 gap-4">
+                        {/* Pulsante diretto per Alimenti */}
+                        <button 
+                            onClick={() => handleTakePhoto("Alimenti")} 
+                            disabled={!accessToken || isUploading} 
+                            className={`w-full font-bold py-3 px-4 rounded-lg shadow-md transition-colors text-center ${
+                                stagedFiles["Alimenti"] 
+                                    ? 'bg-green-100 border-2 border-green-500 text-green-800' 
+                                    : 'bg-white border-2 border-blue-500 text-blue-600 hover:bg-blue-50'
+                            } disabled:bg-gray-300 disabled:text-gray-500 disabled:border-gray-300 disabled:cursor-not-allowed`}
+                        >
+                            Alimenti {stagedFiles["Alimenti"] ? ' (✓)' : ''}
+                        </button>
+                        
+                        {/* Pulsante diretto per Inalanti */}
+                        <button 
+                            onClick={() => handleTakePhoto("Inalanti")} 
+                            disabled={!accessToken || isUploading} 
+                            className={`w-full font-bold py-3 px-4 rounded-lg shadow-md transition-colors text-center ${
+                                stagedFiles["Inalanti"] 
+                                    ? 'bg-green-100 border-2 border-green-500 text-green-800' 
+                                    : 'bg-white border-2 border-blue-500 text-blue-600 hover:bg-blue-50'
+                            } disabled:bg-gray-300 disabled:text-gray-500 disabled:border-gray-300 disabled:cursor-not-allowed`}
+                        >
+                            Inalanti {stagedFiles["Inalanti"] ? ' (✓)' : ''}
+                        </button>
+
+                        {/* Pulsanti per categorie con sottogruppi (es. Altri allergeni) */}
                         {Object.keys(ALLERGEN_STRUCTURE).map(category => (
-                            <button key={category} onClick={() => setActiveCategory(category)} className="w-full bg-white border-2 border-blue-500 text-blue-600 font-bold py-3 px-4 rounded-lg shadow-md hover:bg-blue-50 transition-colors">
+                            <button 
+                                key={category} 
+                                onClick={() => setActiveCategory(category)} 
+                                disabled={!accessToken || isUploading}
+                                className="w-full bg-white border-2 border-blue-500 text-blue-600 font-bold py-3 px-4 rounded-lg shadow-md hover:bg-blue-50 transition-colors disabled:bg-gray-300 disabled:text-gray-500 disabled:border-gray-300 disabled:cursor-not-allowed"
+                            >
                                 {category}
                             </button>
                         ))}
                     </div>
-                     <button onClick={() => handleTakePhoto("Controllo Positivo (Istamina)")} disabled={!accessToken || isUploading} className={`w-full font-bold py-3 px-4 rounded-lg shadow-md transition-colors ${stagedFiles["Controllo Positivo (Istamina)"] ? 'bg-green-100 border-2 border-green-500 text-green-800' : 'bg-blue-100 text-blue-700 hover:bg-blue-200'} disabled:bg-gray-300 disabled:cursor-not-allowed`}>
-                        Controllo Positivo {stagedFiles["Controllo Positivo (Istamina)"] ? ' (✓)' : ''}
+                    
+                     <button onClick={() => handleTakePhoto("Controllo Positivo (Istamina)")} disabled={!accessToken || isUploading} className={`w-full font-bold py-3 px-4 rounded-lg shadow-md transition-colors ${stagedFiles["Controllo Positivo (Istamina)"] ? 'bg-green-100 border-2 border-green-500 text-green-800' : 'bg-blue-100 text-blue-700 hover:bg-blue-200'} disabled:bg-gray-300 disabled:text-gray-500 disabled:cursor-not-allowed`}>
+                        Controllo Positivo {stagedFiles["Controlto Positivo (Istamina)"] ? ' (✓)' : ''}
                     </button>
                 </div>
             );
+
             return (
                  <>
                     <div className="bg-white p-6 rounded-xl shadow-md mb-6 space-y-4">
